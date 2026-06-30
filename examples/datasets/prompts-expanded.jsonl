@@ -1,0 +1,50 @@
+{"id":"fact-1","prompt":"What is the capital of France? Answer with only the city name.","expected_output":"Paris","evaluation":{"mode":"exact_match","accepted_outputs":["Paris"]}}
+{"id":"fact-2","prompt":"What is the chemical symbol for water? Answer with only the symbol.","expected_output":"H2O","evaluation":{"mode":"exact_match","accepted_outputs":["H2O","H₂O"]}}
+{"id":"fact-3","prompt":"What is the largest planet in our solar system? Answer with only the planet name.","expected_output":"Jupiter","evaluation":{"mode":"exact_match","accepted_outputs":["Jupiter"]}}
+{"id":"fact-4","prompt":"What element has the chemical symbol Au? Answer with only the element name.","expected_output":"gold","evaluation":{"mode":"exact_match","accepted_outputs":["gold","Gold"]}}
+{"id":"fact-5","prompt":"What is the speed of light in vacuum? Answer in km/s with only the number.","expected_output":"300000","evaluation":{"mode":"numeric_exact"}}
+{"id":"fact-6","prompt":"How many continents are there on Earth? Answer with only the number.","expected_output":"7","evaluation":{"mode":"numeric_exact"}}
+{"id":"fact-7","prompt":"What year did World War II end? Answer with only the year.","expected_output":"1945","evaluation":{"mode":"numeric_exact"}}
+{"id":"fact-8","prompt":"What is the boiling point of water in Celsius? Answer with only the number.","expected_output":"100","evaluation":{"mode":"numeric_exact"}}
+{"id":"fact-9","prompt":"Which planet is closest to the Sun? Answer with only the name.","expected_output":"Mercury","evaluation":{"mode":"exact_match","accepted_outputs":["Mercury"]}}
+{"id":"fact-10","prompt":"What is the largest ocean on Earth? Answer with only the name.","expected_output":"Pacific","evaluation":{"mode":"exact_match","accepted_outputs":["Pacific","Pacific Ocean"]}}
+{"id":"math-1","prompt":"What is 13 + 29? Answer with only the number.","expected_output":"42","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-2","prompt":"What is 7 * 8? Answer with only the number.","expected_output":"56","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-3","prompt":"What is 81 / 9? Answer with only the number.","expected_output":"9","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-4","prompt":"What is 15 squared? Answer with only the number.","expected_output":"225","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-5","prompt":"What is the square root of 144? Answer with only the number.","expected_output":"12","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-6","prompt":"What is 2 to the power of 10? Answer with only the number.","expected_output":"1024","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-7","prompt":"What is 100 minus 37? Answer with only the number.","expected_output":"63","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-8","prompt":"What is 256 divided by 16? Answer with only the number.","expected_output":"16","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-9","prompt":"What is 17 times 3? Answer with only the number.","expected_output":"51","evaluation":{"mode":"numeric_exact"}}
+{"id":"math-10","prompt":"What is the remainder of 100 divided by 7? Answer with only the number.","expected_output":"2","evaluation":{"mode":"numeric_exact"}}
+{"id":"logic-1","prompt":"Is 21 divisible by 3? Answer with only yes or no.","expected_output":"yes","evaluation":{"mode":"exact_match","accepted_outputs":["yes","Yes"]}}
+{"id":"logic-2","prompt":"Is 15 an even number? Answer with only yes or no.","expected_output":"no","evaluation":{"mode":"exact_match","accepted_outputs":["no","No"]}}
+{"id":"logic-3","prompt":"Is a square a type of rectangle? Answer with only yes or no.","expected_output":"yes","evaluation":{"mode":"exact_match","accepted_outputs":["yes","Yes"]}}
+{"id":"logic-4","prompt":"Can a prime number greater than 2 be even? Answer with only yes or no.","expected_output":"no","evaluation":{"mode":"exact_match","accepted_outputs":["no","No"]}}
+{"id":"logic-5","prompt":"Is 1 a prime number? Answer with only yes or no.","expected_output":"no","evaluation":{"mode":"exact_match","accepted_outputs":["no","No"]}}
+{"id":"logic-6","prompt":"Do all mammals lay eggs? Answer with only yes or no.","expected_output":"no","evaluation":{"mode":"exact_match","accepted_outputs":["no","No"]}}
+{"id":"logic-7","prompt":"Is water denser as a solid than as a liquid? Answer with only yes or no.","expected_output":"no","evaluation":{"mode":"exact_match","accepted_outputs":["no","No"]}}
+{"id":"logic-8","prompt":"Does the Earth revolve around the Sun? Answer with only yes or no.","expected_output":"yes","evaluation":{"mode":"exact_match","accepted_outputs":["yes","Yes"]}}
+{"id":"logic-9","prompt":"Is Python a compiled language? Answer with only yes or no.","expected_output":"no","evaluation":{"mode":"exact_match","accepted_outputs":["no","No"]}}
+{"id":"logic-10","prompt":"Can light travel through a vacuum? Answer with only yes or no.","expected_output":"yes","evaluation":{"mode":"exact_match","accepted_outputs":["yes","Yes"]}}
+{"id":"code-1","prompt":"What Python function returns the length of a list? Answer with only the function name.","expected_output":"len","evaluation":{"mode":"exact_match","accepted_outputs":["len"]}}
+{"id":"code-2","prompt":"What Python method converts a string to lowercase? Answer with only the method name.","expected_output":"lower","evaluation":{"mode":"exact_match","accepted_outputs":["lower","str.lower",".lower()"]}}
+{"id":"code-3","prompt":"What Python keyword is used to define a function? Answer with only the keyword.","expected_output":"def","evaluation":{"mode":"exact_match","accepted_outputs":["def"]}}
+{"id":"code-4","prompt":"What Python keyword is used to import a module? Answer with only the keyword.","expected_output":"import","evaluation":{"mode":"exact_match","accepted_outputs":["import"]}}
+{"id":"code-5","prompt":"What Python data structure uses square brackets? Answer with only the type name.","expected_output":"list","evaluation":{"mode":"exact_match","accepted_outputs":["list","List"]}}
+{"id":"code-6","prompt":"What Python function reads user input from the console? Answer with only the function name.","expected_output":"input","evaluation":{"mode":"exact_match","accepted_outputs":["input"]}}
+{"id":"code-7","prompt":"What Python keyword exits a loop immediately? Answer with only the keyword.","expected_output":"break","evaluation":{"mode":"exact_match","accepted_outputs":["break"]}}
+{"id":"code-8","prompt":"What Python built-in returns the absolute value of a number? Answer with only the function name.","expected_output":"abs","evaluation":{"mode":"exact_match","accepted_outputs":["abs"]}}
+{"id":"code-9","prompt":"What character starts a single-line comment in Python? Answer with only the character.","expected_output":"#","evaluation":{"mode":"exact_match","accepted_outputs":["#"]}}
+{"id":"code-10","prompt":"What Python function returns the type of an object? Answer with only the function name.","expected_output":"type","evaluation":{"mode":"exact_match","accepted_outputs":["type"]}}
+{"id":"translate-1","prompt":"Translate the word 'red' into French. Answer with only one word.","expected_output":"rouge","evaluation":{"mode":"exact_match","accepted_outputs":["rouge","Rouge"]}}
+{"id":"translate-2","prompt":"Translate the word 'blue' into French. Answer with only one word.","expected_output":"bleu","evaluation":{"mode":"exact_match","accepted_outputs":["bleu","Bleu"]}}
+{"id":"translate-3","prompt":"What is the German word for 'thank you'? Answer with only the word.","expected_output":"danke","evaluation":{"mode":"exact_match","accepted_outputs":["danke","Danke"]}}
+{"id":"translate-4","prompt":"What is the Spanish word for 'hello'? Answer with only the word.","expected_output":"hola","evaluation":{"mode":"exact_match","accepted_outputs":["hola","Hola"]}}
+{"id":"translate-5","prompt":"What is the Japanese word for 'water'? Answer with only the word.","expected_output":"mizu","evaluation":{"mode":"exact_match","accepted_outputs":["mizu","Mizu","みず"]}}
+{"id":"writing-1","prompt":"Give one short sentence explaining block diffusion in language modeling.","evaluation":{"mode":"keyword_coverage","keywords":["block","diffusion","language","token"]}}
+{"id":"writing-2","prompt":"Give one short sentence explaining masked denoising.","evaluation":{"mode":"keyword_coverage","keywords":["mask","denoise","token","predict"]}}
+{"id":"writing-3","prompt":"Give one short sentence explaining gradient descent.","evaluation":{"mode":"keyword_coverage","keywords":["gradient","optimiz","function","loss"]}}
+{"id":"writing-4","prompt":"Give one short sentence explaining a transformer attention mechanism.","evaluation":{"mode":"keyword_coverage","keywords":["attention","query","key","value"]}}
+{"id":"writing-5","prompt":"Give one short sentence explaining what a tokenizer does.","evaluation":{"mode":"keyword_coverage","keywords":["token","text","split","convert"]}}
