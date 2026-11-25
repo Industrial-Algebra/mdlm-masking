@@ -1,457 +1,334 @@
-# Don't Mask That Period: Min-Based Bayesian Gating for Causal Masked Diffusion Language Models
+# Don't Mask That Period: Structural-Frequency Masking for Causal Masked Diffusion Language Models
 
-**Justin Elliott Cobb** · Industrial Algebra · June 2026
+**Justin Elliott Cobb** · Industrial Algebra · November 2026 (v2 — evidence revision)
+
+> v2 note: this revision supersedes the July 2026 v1. It replaces the informal
+> 50-prompt comparisons with a matched 100k-step ablation, adds confidence
+> intervals, a diffusion-native NELBO, and a generative factual evaluation, and
+> relabels the failure mechanism as a hypothesis. The v1 "59% of AR accuracy"
+> framing is withdrawn.
 
 ---
 
 ## Abstract
 
-Masked diffusion language models (MDLMs) convert autoregressive LMs into parallel-sampling
-diffusion models by fine-tuning with random token corruption. While recent work
-(DiffusionGemma, DeepMind 2026) demonstrates the viability of this approach at scale
-with a 26B MoE model generating 256-token blocks at 4× autoregressive speed, we
-identify a fundamental failure mode in the standard training procedure: uniform
-random masking catastrophically fails in causal-MDLM fine-tuning of smaller
-pretrained autoregressive models, collapsing to only periods at every position.
-
-We introduce a **min-based Bayesian gating function** that combines a structural gate
-(never mask punctuation) with a frequency gate (rare words mask more) via a simple
-product. This eliminates the period collapse and restores factual correctness.
-On a 50-prompt evaluation across six categories, our Bayesian-gated MDLM (Qwen 2 1.5B)
-achieves 59% of the autoregressive baseline's quality at **5.1× lower latency** (117 ms
-vs 599 ms). The gate generalizes across model families (Qwen 1.5B, TinyLlama 1.1B) and
-the min operation connects naturally to tropical semiring algebra, suggesting a unified
-framework for token-level and block-level diffusion gating. We release all code,
-checkpoints, and evaluation manifests under open-source licenses.
+Masked diffusion language models (MDLMs) convert autoregressive LMs into
+parallel-sampling diffusion models by fine-tuning with random token corruption. We
+study a controlled question at small scale: *does the distribution governing which
+tokens get corrupted during fine-tuning matter?* In a matched 100k-step ablation on
+Qwen2 1.5B (identical model, data, schedule, seed, and attention; only the
+token-selection function differs), we find that the training-time mask distribution
+**decouples autoregressive discriminative quality from diffusion generative
+quality**. A structural-frequency product gate (never mask punctuation; mask rare
+tokens more) and uniform-random masking produce checkpoints that are *statistically
+indistinguishable* on standard multiple-choice benchmarks — ARC, HellaSwag,
+WinoGrande, and MMLU under autoregressive scoring (all |z| < 0.7) — yet differ
+drastically in generation: on a 40-prompt gold-answered factual set, the gated model
+reproduces the correct fact 95% of the time while the uniform model does so 12.5% of
+the time, period-collapsing on 82.5% of prompts. The gap is confirmed by likelihood:
+LAMBADA perplexity 6.83 vs 8.21 (z ≈ 5) under AR scoring, and a diffusion-native
+NELBO of 3.30 vs 3.91 nats/token (z ≈ 10, upper bounds), with schedule-invariance
+validation. **The mask scheme is a generative-quality lever, not a discriminative
+one.** Code, manifests, and the ablation protocol are released.
 
 ## 1. Introduction
 
-Diffusion language models (DLMs) promise a fundamental speed advantage over autoregressive
-(AR) generation: instead of producing tokens one at a time, they generate multiple tokens
-in parallel through iterative denoising [Austin et al. 2021, Sahoo et al. 2024]. Google
-DeepMind's recent release of DiffusionGemma (June 2026) — a 26B Mixture-of-Experts model
-generating 256-token blocks at 4× AR speed [DeepMind 2026] — demonstrates that this
-approach works at industrial scale.
+Diffusion LMs promise parallel generation through iterative denoising, and recent
+systems demonstrate the approach at production scale. A complementary path —
+fine-tuning a public AR model into an MDLM on commodity hardware — is the setting we
+study.
 
-However, achieving these results requires either training a new model from scratch
-(DiffusionGemma was built on the Gemma 4 backbone with a custom architecture) or
-fine-tuning an existing pretrained autoregressive LM for the diffusion objective. We
-focus on the latter: **converting public AR models into diffusion models through
-limited fine-tuning on commodity corpora.** This path is accessible to researchers
-without large-scale training infrastructure.
+The standard recipe is uniform random token corruption, inherited from BERT-era
+masked LM. We ask: among the design choices in MDLM fine-tuning, does the
+*distribution governing which tokens are corrupted* matter? Prior and concurrent work
+modifies the corruption *schedule* (the time axis): mask-ratio schedules,
+context-weighted loss reweighting, layer-wise partitioning of the schedule
+(DiffusionBlocks). None varies **token selection** — which real tokens absorb the
+corruption budget.
 
-This conversion path faces a critical obstacle that has gone unreported: **the standard
-uniform random masking approach catastrophically fails.** When fine-tuning a pretrained
-AR model with uniform masking — the approach inherited from BERT [Devlin et al. 2019] —
-the model collapses to predicting only periods at every generation position, regardless
-of the input prompt. We trace this failure to the interaction between causal attention,
-pretrained bigram statistics, and limited fine-tuning data (§3).
+We answer with a matched ablation: two runs of Qwen2 1.5B-Instruct, identical in
+every configuration field (100k steps, cosine multi-timestep schedule, bidirectional
+training, causal inference, batch, seed, data), differing only in the
+token-selection function — uniform vs a **structural-frequency product gate**
+(structural veto on punctuation × inverse-log-frequency weight).
 
-Our contribution is threefold:
-1. We identify and empirically demonstrate the **uniform mask failure** in causal-MDLM
-   fine-tuning — a negative result with implications for the standard training approach.
-2. We propose **min-based Bayesian gating** as the solution: a structural gate prevents
-   punctuation from being masked; a frequency gate focuses training on informative tokens;
-   the two combine as a product gate (§4).
-3. We validate across two model families (Qwen 1.5B, TinyLlama 1.1B) and show **5.1×
-   speedup at 59% AR quality** on a 50-prompt evaluation set (§5).
+The result is a decoupling:
 
-The min operation is inspired by tropical semiring algebra, where min replaces conventional
-addition as the fundamental combining operation [Maclagan & Sturmfels 2015]. This provides
-a principled algebraic foundation and connects naturally to tropical Viterbi decoding for
-block-level acceptance decisions (§8).
+1. **Discriminative quality is unchanged.** Under AR scoring the checkpoints are
+   statistically indistinguishable on ARC-Challenge, HellaSwag, WinoGrande, MMLU
+   (all |z| < 0.7, mixed sign; §5.4).
+2. **Generative quality differs drastically.** 40-prompt gold-answered factual set:
+   gated 95% gold-match with clean sentence-terminated outputs; uniform 12.5%
+   gold-match, bare-period emission on 82.5% of prompts (§5.1).
+3. **Likelihood agrees with generation, not the benchmarks.** LAMBADA PPL 6.83 vs
+   8.21 (z ≈ 5); diffusion-native NELBO 0.61 nats/token better (z ≈ 10; §5.2).
+
+The masking policy is a *generative-quality lever*. Standard MC evaluation cannot see
+the difference because it measures the discriminative pathway; uniform masking's
+failure mode lives in the generative pathway, where the model period-collapses rather
+than emitting content.
 
 ## 2. Background and Related Work
 
 ### 2.1 Absorbing-State Masked Diffusion
 
-In the absorbing-state MDLM framework [Sahoo et al. 2024], a pretrained language model
-is fine-tuned to predict randomly masked tokens. At training time, each token is
-independently replaced with a special [MASK] token with probability p, following a
-noise schedule. The model is trained to predict the original token at each masked
-position, minimizing cross-entropy loss over masked positions only.
+MDLM (Sahoo et al. 2024): fine-tune a pretrained LM to predict masked tokens;
+cross-entropy over masked positions; inference by iterative parallel unmasking.
 
-At inference time, generation begins with a prompt followed by a sequence of [MASK]
-tokens. The model iteratively predicts tokens at masked positions, gradually
-"unmasking" the sequence until all positions are filled. Each step produces multiple
-tokens in parallel, providing the speed advantage over AR generation.
+### 2.2 Three Axes of Masking-Process Design
 
-### 2.2 Standard Masking: Uniform Random
+- **Schedule weighting (time axis):** mask-ratio schedules and time reweighting
+  (Sahoo et al.; Context-weighted Discrete Flow Matching, arXiv:2607.21427);
+  DiffusionBlocks (Shing, Koyama, Akiba, ICLR 2026, arXiv:2506.14202) partitions the
+  schedule across *layer*-blocks for memory-efficient training. Multi-Mask DLMs
+  (arXiv:2607.19686) modify the terminal mask state space.
+- **Model parameterization:** SUBS-style denoisers, score entropy
+  (Mean-to-Score, arXiv:2607.21372).
+- **Token selection (this work):** which real tokens absorb the corruption budget.
+  To our knowledge no prior or concurrent system varies this; uniform i.i.d.
+  selection is universal.
 
-The standard approach — inherited from BERT [Devlin et al. 2019] — is uniform random
-masking. At each training step, for each token independently: replace with [MASK]
-with probability 15%, keep unchanged with probability 85%. This is the default in
-virtually all masked language modeling literature [Raffel et al. 2020, Joshi et al.
-2020] and is rarely questioned as a design choice.
+### 2.3 Likelihood Evaluation for Masked Diffusion
 
-### 2.3 DiffusionGemma
+Block Diffusion (Arriola et al., ICLR 2025) develops NELBO-based likelihood for
+masked/block diffusion and presents the simplified masked-diffusion NELBO of Sahoo et
+al. that we use (§5.2); it is schedule-invariant, which provides a built-in
+implementation check. DiffusionBlocks reports text8 bpc under the same objective
+family.
 
-Concurrent with our work, Google DeepMind released DiffusionGemma [DeepMind 2026],
-a 26B Mixture-of-Experts diffusion language model generating 256-token blocks via
-iterative denoising with bidirectional attention. It achieves 4× speedup over AR
-generation and runs on 24 GB GPUs (18 GB with quantization). DiffusionGemma validates
-the AR→diffusion paradigm at industrial scale and is released under Apache 2.0.
+### 2.4 Deployed Discrete Diffusion
 
-Key differences: (1) DiffusionGemma uses a custom MoE architecture trained from
-scratch on Gemma 4, while we fine-tune standard public AR models; (2) their scale
-(26B MoE, 3.8B active) dwarfs ours (1.5B dense); (3) our Bayesian mask is a
-training methodology applicable to any AR model, including DiffusionGemma's training
-pipeline. The Bayesian gate could improve data efficiency and address period-bias
-problems that may resurface when fine-tuning on domain-specific corpora.
+DiffusionGemma (26B MoE, 4× AR speed, Apache 2.0) validates the paradigm at scale;
+radiology deployment (arXiv:2607.01436) and prefix KV caching (arXiv:2606.07571)
+complement our small-scale conversion-methodology question. BERT-era masking
+heuristics used bidirectional from-scratch training — a different regime (§3.4).
 
-### 2.4 Other Related Work
+## 3. The Uniform-Mask Degradation, Controlled
 
-Masked language modeling traces to BERT [Devlin et al. 2019] and was extended to
-span-based masking by T5 [Raffel et al. 2020] and SpanBERT [Joshi et al. 2020].
-These approaches use linguistic pre-processing (whole-word masking, span boundaries)
-that we avoid. Diffusion models for discrete data were introduced by D3PM [Austin
-et al. 2021] and extended to text by SSD-LM [Han et al. 2022] and MDLM [Sahoo et
-al. 2024]. Our work contributes to the MDLM line by identifying and fixing a
-training pathology specific to causal fine-tuning.
+### 3.1 Matched Ablation Protocol
 
-Tropical algebra in machine learning has been applied to neural network analysis
-[Zhang et al. 2018] and sequence modeling via Viterbi decoding. The amari-tropical
-crate [Industrial Algebra 2025] provides max-plus primitives used in our block-level
-extension.
+Two fine-tuning runs of Qwen2 1.5B-Instruct on a local C4 slice, identical in every
+configuration field: 100,000 optimizer steps, batch size 4, seed 42, AdamW
+(lr 1e-5), bfloat16, bidirectional training attention with causal inference-time
+attention, multi-timestep cosine corruption schedule (ratio r = 1 − cos(πu/2), u ~
+U(0,1), mean ratio ≈ 0.6) on top of a 0.15 base token-masking rate. The runs differ
+in exactly one function:
 
-## 3. The Uniform Mask Failure
+- **Uniform:** each non-special token masked i.i.d. with equal probability.
+- **Gated:** masking probability multiplied by the structural-frequency product gate
+  (§4).
 
-### 3.1 Experimental Setup
+Both trained on a single NVIDIA GB10 GPU (122 GB unified memory) to 99,999 steps.
+Checkpoints, configs, and run manifests are released with the evaluation artifacts.
 
-We fine-tune Qwen 2 1.5B-Instruct [Yang et al. 2024] on 1M examples from the C4
-corpus [Raffel et al. 2020] (en subset) for 50,000 steps with batch size 4, using
-a cosine noise schedule (p = 1 − cos(πu/2), u ~ Uniform(0,1)), AdamW optimizer
-(lr=1e-5, weight decay 0.01), gradient clipping at 1.0, and standard uniform random
-masking. Training uses a single NVIDIA GB10 GPU (122 GB unified memory). The model
-is loaded in bfloat16 precision.
+### 3.2 Training Loss and the Collapse
 
-### 3.2 Results
+Gated best masked-cross-entropy loss **3.124**; uniform **4.857** — a 1.73-nat gap on
+the training objective itself. Under greedy diffusion sampling the uniform checkpoint
+exhibits *period collapse*: a bare "." at the first generation position regardless of
+prompt (period holds ≈60% probability at first masked positions). The gated
+checkpoint produces sentence-terminated factual completions (§5.1 quantifies).
 
-The uniform-mask model produces only periods at every generation position,
-regardless of input prompt:
+### 3.3 Hypothesized Mechanism (Not Established)
 
-| Prompt | Model Output |
-|--------|-------------|
-| "The capital of France is" | `.` |
-| "The chemical symbol for water is" | `.` |
-| "The largest planet in our solar system is" | `.` |
-| "What is 7 × 8?" | `.` |
+**Hypothesis** (consistent with, but not directly established by, our evidence):
+web-scale pretraining makes sentence-final punctuation the dominant completion
+prior; uniform masking spends its corruption budget mostly on high-frequency tokens,
+so the denoising objective is dominated by frequent glue-token prediction and the
+period prior is never unlearned. The structural gate removes punctuation from the
+pool entirely; the frequency gate shifts budget toward informative rare tokens.
 
-This is not a rare failure mode — it is deterministic. Every prompt produces a period.
-The model's token-level logits confirm: at the first masked position after "capital of
-France is", the period token has 60.5% probability, followed by space (15.3%), newline
-(6.8%), and comma (6.5%). Content-bearing tokens are overwhelmingly suppressed.
-
-### 3.3 Root Cause Analysis
-
-The pretraining corpus of Qwen 2 (and most large LMs) is dominated by a simple
-statistical pattern: sentence-ending punctuation. In web text, the bigram
-`[word, "."]` is the single most common token pair. When a pretrained AR model
-sees [MASK] at the end of a sequence during fine-tuning, its pretrained prior
-heavily favors predicting "." — because that is the token most frequently observed
-at sequence-final positions across its pretraining data.
-
-Causal attention amplifies this bias. The model only sees left context when predicting
-a masked position. At sequence end, the left context is "… is [MASK]" — and the
-most common completion of "is" in the pretraining data is a content word followed
-by ".", so the model predicts "." directly rather than the intermediate content word.
-
-With 50K steps of fine-tuning on 1M examples, the model receives insufficient training
-signal to overcome this prior. The cosine schedule, which samples mask ratios across
-[0,1], means most training steps see few masks (low-ratio regime), and high-ratio
-steps are too corrupted to learn from. The model converges to the statistical mode.
+Two corrections to the v1 framing: (i) this is a hypothesis, not a verified
+mechanism; (ii) under cosine t-sampling the *mean* mask ratio is ≈ 0.6 — v1's "most
+steps see few masks" characterization was wrong.
 
 ### 3.4 Why Hasn't This Been Observed Before?
 
-BERT and T5 use **bidirectional** attention and train **from scratch** on massive
-datasets (3.3B+ words for BERT, 750 GB for T5). Bidirectional attention allows
-the model to see right context, which signals "this position is not the end of the
-sentence." Training from scratch means no pretrained period prior exists to overcome.
+BERT/T5: bidirectional attention, from-scratch training on massive corpora —
+right-context corrects the end-of-sequence bias; no inherited period prior.
+Production DLMs train from scratch at scale. Small-scale *causal fine-tune of a
+pretrained AR model* is the exposed regime. And the failure is *invisible to
+discriminative evaluation* (§5.4) — most suites are discriminative.
 
-Causal-MDLM fine-tuning is a different regime: (1) limited fine-tuning data cannot
-overcome pretrained bigram statistics, (2) causal attention removes the right-context
-signal that would correct the bias, (3) the cosine schedule's high-ratio steps may
-exacerbate the problem by presenting corrupted sequences where punctuation predictions
-are the only statistically safe choice.
-
-## 4. Min-Based Bayesian Gating
-
-### 4.1 Design
-
-We introduce a masking policy that structurally prevents punctuation from being masked
-while statistically focusing training on informative tokens. The masking probability is a
-product of three factors:
+## 4. Structural-Frequency Product Gating
 
 ```
 p_mask(t) = r · s(t) · f(t)
 ```
-
-where r is the base mask ratio from the cosine noise schedule, s(t) is a binary
-structural gate, and f(t) is a continuous frequency weight:
 
 | Gate | Symbol | Formula | Effect |
 |------|--------|---------|--------|
 | Structural | s(t) | 0 if t ∈ punctuation/special, else 1 | Periods never masked |
 | Frequency | f(t) | 1 / (1 + log(count(t) + 1)) | Rare words mask more |
 
-Since s(t) ∈ {0,1}, this is equivalent to p_mask(t) = r · f(t) when t passes the
-structural gate (s=1), and 0 otherwise. The product form is used throughout because
-it makes the decomposition explicit.
+- **Structural gate:** binary vocabulary filter (~0.1 s startup). Punctuation,
+  special tokens, and the mask token are never masked.
+- **Frequency gate:** inverse log frequency from the first 50K corpus lines (~5 s
+  startup). "the" (count ~10⁷) → ≈0.14; "Paris" (count ~10³) → ≈0.85.
+- **Composition:** the structural gate is a binary veto; for s=1 the effective
+  probability is r·f(t). Since s ∈ {0,1}, the product form equals r·min(s,f) — the
+  product formulation reflects intended semantics (independent probability factors),
+  not a different distribution. Both gates are O(1) per token; no linguistic
+  pre-processing, no architecture changes.
 
-### 4.2 Structural Gate s(t)
+## 5. Evidence
 
-The structural gate is a binary filter over the tokenizer's vocabulary. Any token
-that decodes to a string starting with punctuation (`.`, `,`, `?`, `!`, `;`, `:`,
-`"`, `'`, `-`, `(`, `[`, `{`) is excluded from masking. Special tokens (EOS, PAD)
-and the mask token itself are also excluded. This is computed once at startup by
-scanning the tokenizer vocabulary (~0.1s).
+All evaluation on the matched pair (§3.1); greedy generation unless stated.
+Bootstrap SEs from lm-eval-harness; z = (ĝ − û)/√(se_g² + se_u²); |z| ≥ 2
+significant.
 
-This gate eliminates the period-collapse problem directly: periods are never masked,
-so the model never learns to predict them at mask positions. The 60% probability
-mass concentrated on "." in the uniform-mask model is redistributed to content tokens.
+### 5.1 Generative Factual Evaluation (Primary)
 
-### 4.3 Frequency Gate f(t)
+Standard benchmarks measure discrimination; the failure mode is generative. We
+evaluate generation directly: 40 factual prompts with gold answers across eight
+categories (capitals, chemistry, astronomy, currency, geography, arts, language,
+science). **Provenance: author-authored, not a standard benchmark** — deliberately,
+because standard suites cannot detect period collapse. Metrics: gold-match
+factuality, collapse rate, other-rate, median oracle-PPL (base Qwen2-1.5B-Instruct
+judge).
 
-The frequency gate weights tokens by inverse log frequency. Token frequencies are
-estimated from the first 50K lines of the training corpus (~5s at startup). Token
-"the" (count ~10⁷) receives weight ~0.14. Token "Paris" (count ~10³) receives
-weight ~0.85. The model trains primarily on rare, informative tokens.
+| Metric | Gated | Uniform |
+|---|---|---|
+| Gold-match factuality | **0.950** | 0.125 |
+| Period collapse | **0.025** | 0.825 |
+| Other (wrong/tautology) | **0.025** | 0.050 |
+| Mean generated tokens | 3.5 | 1.4 |
+| Oracle PPL (median) | **26.7** | 635.8 |
 
-### 4.4 The Min Operation
+Per-category gold-match (gated/uniform): capitals 0.92/0.00 (n=12), chemistry
+1.00/0.14 (7), astronomy 1.00/0.33 (6), currency 1.00/0.00 (5), geography 1.00/0.20
+(5), arts 1.00/0.00 (3). Uniform period-collapses on 8/8 capital prompts. The
+collapsed period is *contextually* surprising to the oracle judge (it expects the
+fact) — hence uniform's high oracle PPL.
 
-Using `min` rather than product or sum ensures **conservative gating**: both
-conditions must independently approve masking before a token is eligible.
+### 5.2 Diffusion-Native Likelihood (NELBO)
 
-Note: For a binary structural gate s ∈ {0,1}, the min formulation
-p = r·min(s,f) and the product formulation p = r·s·f are mathematically
-identical. We use the product form for clarity. The structural gate provides
-a hard veto (s=0 guarantees no masking); the frequency gate modulates the
-rate for eligible tokens (s=1 → p = r·f).
+Conditional NELBO of continuation given context, following the simplified
+masked-diffusion bound of Sahoo et al. as presented in Block Diffusion (App. B.3):
+context never masked (conditioned block), continuation corrupted at 1 − α(t),
+weighted masked cross-entropy integrated over t ~ U(0,1). NELBO ≥ NLL, so PPLs are
+**upper bounds**. Masks paired across checkpoints. Full LAMBADA test (5,153
+examples, 100 t-samples):
 
-The min-based formulation was originally inspired by tropical semiring
-algebra [Maclagan & Sturmfels 2015], where min serves as the additive
-operation (a ⊕ b = min(a,b)). The amari-tropical crate [Industrial Algebra
-2025] provided the algebraic context that suggested the two-gate design.
-The tropical connection extends more meaningfully to block-level acceptance
-via max-plus Viterbi decoding (§8), where the max operation genuinely
-differs from alternatives and provides a principled algebraic foundation.
+| | NELBO (nats/tok) | bpc | PPL (upper bound) |
+|---|---|---|---|
+| Gated | **3.300** ± 0.042 | 4.76 | 27.1 |
+| Uniform | 3.909 ± 0.044 | 5.64 | 49.9 |
+| Gap | −0.610 (z ≈ −10) | −0.88 | 1.84× |
 
-### 4.5 Implementation
+Schedule invariance (Sahoo et al.): linear α = 1−t vs quadratic α = (1−t)² on the
+gated checkpoint agree to 4.1% — validating the implementation. The diffusion-native
+likelihood discriminates the pair an order of magnitude more sharply than AR
+benchmark scoring: the metric native to the generative pathway sees the difference
+the benchmarks cannot.
 
-Both gates are O(1) per token. The structural gate uses a precomputed `frozenset`
-of token IDs. The frequency gate uses a precomputed `Vec<f32>` of per-token weights.
-No linguistic pre-processing, part-of-speech tagging, or architecture changes required.
+### 5.3 Cloze Likelihood: LAMBADA
 
-## 5. Experiments
+True AR scoring (real continuation, causal forward):
 
-### 5.1 Main Result: Uniform vs Bayesian Mask
+| | Gated | Uniform |
+|---|---|---|
+| LAMBADA PPL | **6.83** | 8.21 |
+| LAMBADA accuracy | **0.590** | 0.536 |
+| Masked-span PL PPL | **759** | 1906 |
 
-**Config:** Qwen 2 1.5B, bidirectional training, cosine schedule, C4 1M, 50K steps,
-causal inference with left-to-right sequential unmasking, early stopping.
+PPL/accuracy differences significant (z ≈ −4.8, +5.5). PL row = parallel masked
+prediction (MDLM-native, higher-variance view).
 
-| Mask | "capital of France" | "symbol for water" | "largest planet" | tq (50) |
-|------|--------------------|--------------------|--------------------|---------|
-| Uniform | `.` | `.` | `.` | 0.000 |
-| Bayesian | **Paris.** | **H₂O.** | **Jupiter.** | **0.340** |
+### 5.4 Discriminative Equivalence: The Decoupling
 
-### 5.2 Cross-Model Validation
+Same checkpoints, AR-scored standard MC benchmarks:
 
-Identical Bayesian mask config on TinyLlama 1.1B-Chat [Zhang et al. 2024]:
+| Benchmark | Gated | Uniform | Δ | z |
+|---|---|---|---|---|
+| ARC-Challenge (acc) | 0.3635 | 0.3558 | +0.0077 | +0.39 |
+| ARC-Challenge (acc_norm) | 0.3925 | 0.3968 | −0.0043 | −0.21 |
+| HellaSwag (acc) | 0.4928 | 0.4891 | +0.0037 | +0.52 |
+| HellaSwag (acc_norm) | 0.6523 | 0.6559 | −0.0037 | −0.55 |
+| WinoGrande (acc) | 0.6551 | 0.6582 | −0.0032 | −0.17 |
+| MMLU (acc) | 0.5551 | 0.5588 | −0.0036 | −0.64 |
 
-| Model | "capital of France" | "largest planet" |
-|-------|--------------------|--------------------|
-| Qwen 2 1.5B | **Paris.** | **Jupiter.** |
-| TinyLlama 1.1B | **Paris.** | **Jupiter.** |
+All within noise (|z| < 0.7), mixed sign. Token-level next-token accuracy agrees:
+uniform marginally *higher* (0.392 vs 0.356). The generative pathway is where the
+mask distribution acts.
 
-### 5.3 Causal vs Bidirectional Training
+### 5.5 Secondary Results (Preliminary Runs, Provenance Stated)
 
-| Training Attention | "capital of France" | "largest planet" | Best Loss |
-|-------------------|--------------------|--------------------|-----------|
-| Causal | `Paris the of...` | `Mercury the...` | 3.46 |
-| **Bidirectional** | **`Paris.`** | **`Jupiter.`** | **3.10** |
-
-Bidirectional training produces better results with causal inference. This suggests
-bidirectional context during training teaches richer representations that transfer
-to improved causal predictions — an unexpected finding given that the model is
-pretrained causally.
-
-### 5.4 Speed/Quality Tradeoff (Expanded 50-Prompt Eval)
-
-| Model | task_quality | Latency (ms) | Speedup | Memory |
-|-------|-------------|-------------|---------|--------|
-| AR 1.5B | 0.575 | 599 | 1.0× | 2.9 GB |
-| MDLM (ours) | 0.340 | **117** | **5.1×** | 0.3 GB |
-
-Per-category breakdown:
-
-| Category | # Prompts | AR Accuracy | MDLM Accuracy | Ratio |
-|----------|----------|------------|---------------|-------|
-| Factual knowledge | 10 | 0.90 | 0.60 | 67% |
-| Mathematics | 10 | 0.80 | 0.30 | 38% |
-| Logic/yes-no | 10 | 0.80 | 0.50 | 63% |
-| Code/technical | 10 | 0.30 | 0.10 | 33% |
-| Translation | 5 | 0.40 | 0.20 | 50% |
-| Writing/keywords | 5 | 0.25 | 0.34 | 136% |
-
-The MDLM matches or exceeds AR quality on writing tasks (keyword-coverage scoring)
-but lags on code and mathematics, which require precise token-level generation.
-
-### 5.5 Scaling Experiments
-
-| Run | Steps | Data | Best Loss | Factual Quality |
-|-----|-------|------|-----------|-----------------|
-| Qwen bidir 50K | 50K | 1M C4 | 3.10 | Paris, H₂O, Jupiter |
-| Qwen bidir 100K | 100K | 1M C4 | 2.95 | Paris, H₂O, Jupiter |
-| TinyLlama bidir 1M | 50K | 1M C4 | 2.25 | Paris, Jupiter |
-| TinyLlama bidir 5M | 50K | 5M C4 | 2.26 | Paris, Jupiter |
-
-Doubling steps and quintupling data diversity did not improve already-correct answers
-or fix remaining weak spots. This suggests a model capacity or data quality ceiling
-rather than a training budget limitation.
+- **Cross-model:** effect reproduces on TinyLlama 1.1B-Chat.
+- **Attention regime:** bidirectional training + causal inference beats causal
+  training (best loss 3.10 vs 3.46); both matched cells use the bidirectional regime,
+  so the matched comparison isolates the gate.
+- **Block training (negative result):** block-level corruption degrades factual
+  recall; token-trained models support block sampling without block-specific
+  training.
+- **Gate ablation:** either gate alone prevents collapse; both minimize loss (4.86
+  uniform vs 3.10 gated, preliminary).
+- **Conciseness (custom 50-prompt set):** 19-char average outputs vs AR's 45;
+  117–134 ms time-to-output vs 599 ms — conciseness from sentence-boundary early
+  stopping, not per-token speed (≈0.9× AR).
 
 ## 6. Sampler Design
 
-### 6.1 Sequential Unmasking
+- **Sequential unmasking:** left-to-right (most-confident-first fails — punctuation
+  carries high confidence and poisons subsequent predictions).
+- **Early stopping:** sentence-ending punctuation/EOS stops generation → 1–3-token
+  factual answers.
+- **Block-level sampling:** blocks of k ∈ {4,8,16,32}; works on token-trained models
+  without block-specific training.
 
-We initially used confidence-based selection (unmask the most confident positions first),
-which produced garbled output. The problem: sentence-ending punctuation has higher
-prediction confidence than content tokens, so periods were unmasked first, poisoning
-subsequent predictions.
+## 7. Discussion
 
-Switching to **left-to-right sequential unmasking** (always fill the leftmost mask
-position first) fixed this. This respects the causal structure of language and produces
-coherent output.
+### 7.1 Limitations
 
-### 6.2 Early Stopping
+1. **Generative set provenance:** author-authored 40-prompt set; no standard
+   benchmark measures this failure mode (that is the point); set, gold answers, and
+   scorer released.
+2. **ELBO upper bounds:** NELBO-derived PPL/bpc upper-bound the truth (loosely:
+   true LAMBADA PPL is 6.83/8.21). Differences and significance valid; absolutes are
+   not perplexities. Variance cap (w ≤ 20) biases absolute NELBO down slightly; the
+   gap is cap-robust.
+3. **Single seed, single scale:** one seed, one model (1.5B), one corpus slice.
+4. **Mechanism unverified** (§3.3 is a hypothesis).
+5. **Scope:** "discriminative equivalence" covers four MC suites under AR scoring at
+   1.5B — not all discriminative tasks or scales.
 
-The model predicts sentence boundaries naturally after training. We detect
-sentence-ending punctuation (`.`, `!`, `?`) and EOS tokens in generated tokens,
-stopping generation immediately. This produces concise outputs (1-3 tokens for
-factual prompts) rather than filling allocated positions with noise.
+### 7.2 Future Work
 
-### 6.3 Block-Level Sampling
+Multi-seed replication; 3B/7B scale; direct mechanism experiments (corruption-budget
+accounting by token class); generative-factuality benchmarks as community resources;
+composing token-selection gating with schedule-weighting methods (independent axes).
 
-We extended the sampler to generate in blocks of k tokens (k=4,8,16,32). Token-trained
-models work correctly with block-level sampling without block-specific training (§7.1).
+## 8. Conclusion
 
-## 7. Ablation Studies
-
-### 7.1 Block Training (Negative Result)
-
-| Corruption | Block Size | Best Loss | Quality |
-|-----------|-----------|-----------|---------|
-| Token-level | — | **3.10** | **Correct** |
-| Block | 4 | 6.05 | Degraded |
-| Block | 8 | 6.47 | Degraded |
-
-Block-level training degrades factual recall — masking entire contiguous spans removes
-too much context. Token training + block sampling achieves better results.
-
-### 7.2 Gate Ablation
-
-| Gates Active | "capital of France" | Best Loss |
-|-------------|--------------------|-----------|
-| None (uniform) | `.` | 4.86 |
-| Structural only | `Paris.` | — |
-| Frequency only | `Paris.` | — |
-| Both (Bayesian) | **`Paris.`** | **3.10** |
-
-Both gates independently prevent period collapse. The combination achieves lowest loss.
-
-### 7.3 Speed Profile
-
-| Sampling | Latency | vs AR (1463 ms) | Quality |
-|----------|---------|-----------------|---------|
-| Token-level | 203 ms | 7.2× | Correct |
-| Block 32 | 339 ms | 4.3× | Correct |
-| Block 8 | 532 ms | 2.8× | Correct |
-
-## 8. Block Diffusion Extension
-
-### 8.1 Tropical Block-Acceptance
-
-For block-level generation, a critic model scores each token prediction. The block
-acceptance decision uses tropical max (addition): accept if max(scores) > threshold.
-The sequence of block decisions forms a Viterbi path through the block lattice.
-
-This connects directly to the amari-tropical crate [Industrial Algebra 2025], which
-provides max-plus primitives for Viterbi decoding. Implementation and empirical
-validation of block-acceptance gating is future work.
-
-## 9. Discussion
-
-### 9.1 Limitations
-
-Our experiments are limited to models up to 1.5B parameters and training corpora up to
-5M examples. The quality gap on code and mathematics tasks (33-38% of AR) suggests
-that MDLM generation may be better suited to factual and logical queries than
-precision-demanding tasks. The 50-prompt evaluation set, while covering six categories,
-is not a standard benchmark; results on MMLU, HumanEval, or similar would strengthen
-the claims.
-
-### 9.2 Future Work
-
-1. **Block-acceptance critic:** Implement and evaluate the tropical Viterbi block-acceptance
-   protocol described in §8.1.
-2. **Larger-scale validation:** Apply the Bayesian mask to models at 7B+ scale with
-   proportionally larger training corpora.
-3. **Benchmark evaluation:** Report MDLM quality on standard benchmarks (MMLU, HumanEval)
-   for direct comparison with AR baselines and DiffusionGemma.
-4. **Theoretical analysis:** Formalize the connection between tropical gating and absorbing-state
-   diffusion noise schedules.
-
-## 10. Conclusion
-
-We have shown that the standard uniform random masking approach catastrophically fails in
-causal-MDLM fine-tuning of pretrained autoregressive models, producing models that output
-only periods at every generation position. This failure has implications for the standard
-MDLM training procedure and may affect practitioners attempting AR→diffusion conversion
-at any scale.
-
-Our min-based Bayesian gating function eliminates this failure: a structural gate prevents
-punctuation from being masked, a frequency gate focuses training on informative tokens,
-and the tropical min operation ensures conservative combination. The resulting MDLM achieves
-59% of autoregressive quality at 5.1× lower latency, with cross-model validation across
-Qwen 1.5B and TinyLlama 1.1B.
-
-The Bayesian gate is a drop-in modification requiring no architectural changes. The tropical
-min operation connects to a growing body of work on algebraic methods in machine learning
-and extends naturally to block-level diffusion via Viterbi acceptance decoding.
+In a matched ablation isolating the training-time token-corruption distribution, the
+choice between uniform masking and a structural-frequency product gate left AR
+discriminative quality unchanged (all benchmark differences within noise) while
+transforming generative quality: gold-match 95% vs 12.5%, period collapse 2.5% vs
+82.5%, LAMBADA z ≈ 5, diffusion NELBO z ≈ 10. The training mask distribution is a
+generative-quality lever — and its effects are invisible to the discriminative
+evaluations standard suites provide. MDLM fine-tuning recipes should treat token
+selection as a first-class design axis alongside schedule and parameterization.
 
 ## References
 
-[1] J. Austin, D. D. Johnson, J. Ho, D. Tarlow, and R. van den Berg. "Structured Denoising
-Diffusion Models in Discrete State-Spaces." NeurIPS, 2021.
+1. J. Austin et al. "Structured Denoising Diffusion Models in Discrete State-Spaces." NeurIPS 2021.
+2. M. Arriola, Z. Qi, A. K. Gokaslan, J. Han, J. T. Chiu, S. S. Sahoo, Z. Yang, V. Kuleshov. "Block Diffusion: Interpolating between Autoregressive and Diffusion Language Models." ICLR 2025. arXiv:2503.09573.
+3. M. Shing, M. Koyama, T. Akiba. "DiffusionBlocks: Block-wise Neural Network Training via Diffusion Interpretation." ICLR 2026. arXiv:2506.14202.
+4. Multi-Mask Diffusion Language Models. arXiv:2607.19686 (concurrent).
+5. Context-Weighted Discrete Flow Matching for Masked Language Generation. arXiv:2607.21427 (concurrent).
+6. Mean-to-Score: Score Realizability in Discrete Diffusion. arXiv:2607.21372 (concurrent).
+7. DeepMind. "DiffusionGemma." Technical report, June 2026.
+8. J. Devlin et al. "BERT." NAACL 2019.
+9. X. Han, S. Kumar, Y. Tsvetkov. "SSD-LM." ACL 2022.
+10. M. Joshi et al. "SpanBERT." TACL 2020.
+11. C. Raffel et al. "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer." JMLR 2020.
+12. S. S. Sahoo et al. "Simple and Effective Masked Diffusion Language Models." NeurIPS 2024.
+13. A. Yang et al. "Qwen2 Technical Report." arXiv:2407.10671, 2024.
+14. P. Zhang et al. "TinyLlama." arXiv:2401.02385, 2024.
+15. M. Van Puyvelde et al. "Discrete Diffusion LMs for Interactive Radiology Report Drafting." arXiv:2607.01436, 2026.
+16. Y. Go et al. "Enabling KV Caching of Shared Prefix for Diffusion Language Models." arXiv:2606.07571, 2026.
 
-[2] DeepMind. "DiffusionGemma." Technical report, Google DeepMind, June 2026.
-https://diffusiongemma.dev/
+---
 
-[3] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova. "BERT: Pre-training of Deep
-Bidirectional Transformers for Language Understanding." NAACL, 2019.
-
-[4] X. Han, S. Kumar, and Y. Tsvetkov. "SSD-LM: Semi-autoregressive Simplex-based
-Diffusion Language Model for Text Generation and Modular Control." ACL, 2022.
-
-[5] Industrial Algebra. "amari-tropical: Tropical max-plus algebra and ordinal-weighted
-optimization carriers." https://github.com/Industrial-Algebra/Amari, 2025.
-
-[6] M. Joshi, D. Chen, Y. Liu, D. S. Weld, L. Zettlemoyer, and O. Levy. "SpanBERT:
-Improving Pre-training by Representing and Predicting Spans." TACL, 2020.
-
-[7] D. Maclagan and B. Sturmfels. "Introduction to Tropical Geometry." AMS, 2015.
-
-[8] C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and
-P. J. Liu. "Exploring the Limits of Transfer Learning with a Unified Text-to-Text
-Transformer." JMLR, 2020.
-
-[9] S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush,
-and V. Kuleshov. "Simple and Effective Masked Diffusion Language Models." NeurIPS, 2024.
-
-[10] A. Yang, B. Yang, B. Hui, B. Zheng, B. Yu, C. Zhou, C. Li, C. Li, D. Liu, et al.
-"Qwen2 Technical Report." arXiv:2407.10671, 2024.
-
-[11] P. Zhang, G. Zeng, T. Wang, and W. Lu. "TinyLlama: An Open-Source Small Language
-Model." arXiv:2401.02385, 2024.
-
-[12] L. Zhang, G. Naitzat, and L.-H. Lim. "Tropical Geometry of Deep Neural Networks."
-ICML, 2018.
+**Code:** https://github.com/Industrial-Algebra/mdlm-masking
+**v1 (July 2026):** DOI 10.5281/zenodo.24508860 (superseded by this revision).

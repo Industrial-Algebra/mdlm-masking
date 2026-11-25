@@ -2,7 +2,7 @@
 
 Reproduction code for the Quantizon research paper: **"Don't Mask That Period: Structural-Frequency Masking for Causal Masked Diffusion Language Models"**
 
-> **Paper (preprint, DOI):** [10.5281/zenodo.24508860](https://doi.org/10.5281/zenodo.24508860)
+> **Paper (preprint, DOI):** [10.5281/zenodo.24508859](https://doi.org/10.5281/zenodo.24508859)
 
 This repository contains the scripts and datasets needed to reproduce the
 key results: fine-tuning a pretrained autoregressive language model as a
